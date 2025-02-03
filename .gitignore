@@ -1,6 +1,8 @@
 
-# test files
+__pycache__
 
+# test files
+tests
 
 # todo files
 *.todo
