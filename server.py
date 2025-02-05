@@ -3,6 +3,7 @@ import os
 import logging
 from http_handler import HTTPRequestHandler
 from http.server import HTTPServer
+from constants import PORT
 
 class BaseServer(HTTPServer):
 
@@ -36,5 +37,5 @@ class BaseServer(HTTPServer):
 
 
 if __name__ == '__main__':
-    with BaseServer([], ('', 8000), HTTPRequestHandler) as server:
+    with BaseServer([], ('', PORT), HTTPRequestHandler) as server:
         server.serve_forever()
