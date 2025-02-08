@@ -20,7 +20,7 @@ class BaseHTTPSender():
             print(f"An error occurred while sending the request: {e}")
             return
         
-        return response.json()
+        return response
 
 
 
