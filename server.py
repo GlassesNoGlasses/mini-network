@@ -7,27 +7,50 @@ from constants import PORT
 
 class BaseServer(HTTPServer):
 
-    def __init__(self, dir_paths: list[str], server_address, RequestHandlerClass, bind_and_activate = True):
-        try:
-            invalid_paths = [path for path in dir_paths if not os.path.isdir(path)]
+    def __init__(self, root_dir: str, server_address: tuple, 
+                 RequestHandlerClass: HTTPRequestHandler, bind_and_activate: bool = True):
+        '''
+        Initializes the BaseServer class with the directory paths to serve.
+        @param root_dir: str - The root directory to serve.
+        @param server_address: tuple - The address (IP, PORT) of the server.
+        @param RequestHandlerClass: HTTPRequestHandler - The class to handle requests.
+        @param blocked_paths: list[str] - (optional) The paths to block from serving within root_dir.
+        @param bind_and_activate: bool - (optional) Whether to bind and activate the server.
+        '''
 
-            if invalid_paths:
-                raise FileNotFoundError(f"Invalid directory paths: {invalid_paths}")
+        try:
+            if not os.path.isdir(root_dir):
+                raise FileNotFoundError(f"Invalid root directory: {root_dir}")
             
         except FileNotFoundError:
-            print(f"Invalid directory paths: {invalid_paths}. Would you like to create them? (y/n)")
-            res = None
+            option_message = f'''Invalid root directory: {root_dir}. Please select an option to proceed:
+                           1. Create the directory.
+                           2. Enter a new directory.
+                           3. Exit
+                           '''
+            
+            while True:
+                option = input(option_message)[0]
 
-            while len(res = input().lower()) != 1:
-                print("Invalid input. Please enter 'y' or 'n'")
+                if option == '1':
+                    os.makedirs(root_dir)
+                    print(f"Created root direction: {root_dir}")
+                    break
+                elif option == '2':
+                    root_dir = input("Enter a new root directory: ")
 
-            if res == 'y':
-                for path in invalid_paths:
-                    os.makedirs(path)
-                print(f"Created directories: {invalid_paths}")
+                    if os.path.isdir(root_dir):
+                        break
+                    else:
+                        print("Could not find directory path")
+                else:
+                    print("Exiting...")
+                    exit()
+        finally:
+            self._root = root_dir
+            self.blocked_dirs = [".."]
+            super().__init__(server_address, RequestHandlerClass, bind_and_activate)
         
-        self.dir_paths = dir_paths
-        super().__init__(server_address, RequestHandlerClass, bind_and_activate)
 
     def __enter__(self):
         return self
@@ -37,5 +60,5 @@ class BaseServer(HTTPServer):
 
 
 if __name__ == '__main__':
-    with BaseServer([], ('', PORT), HTTPRequestHandler) as server:
+    with BaseServer("/lolol/", ('', PORT), HTTPRequestHandler) as server:
         server.serve_forever()

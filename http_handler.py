@@ -14,6 +14,12 @@ from http.server import BaseHTTPRequestHandler
 
 class HTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        server_root = self.server._root
+        print(f"Directory paths: {server_root}")
+
+        headers = self.headers
+        print(f"Headers: {headers}")
+
         self.send_response(200)
         self.send_header('Content-type','text/html')
         self.end_headers()
