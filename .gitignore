@@ -2,8 +2,11 @@
 # pycache files
 __pycache__
 
-# test files
+
+# test files/dirs
 *test.py
+test
+
 
 # todo files
 *.todo

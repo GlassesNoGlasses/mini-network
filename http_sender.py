@@ -20,7 +20,7 @@ class BaseHTTPSender():
         self.tls = tls
 
 
-    def GET(self, files: list[str], location: list[str] = [], duplicates: bool = False):
+    def GET(self, files: list[str], duplicates: bool = False):
         ''' Sends a GET request to the server. 
             @param files: list[str] - The files/folders to retrieve.
             @param location: list[str] - (optional) The location to retrieve specified files.
@@ -32,12 +32,12 @@ class BaseHTTPSender():
             print("No files specified to retrieve in GET request.")
             return
 
-        params = {"locations": location, "allow_duplicates": duplicates}
+        params = {"files": files, "allow_duplicates": duplicates}
 
-        return self.send_request("GET", params=params)
+        return self._send_request("GET", params=params)
     
 
-    def POST(self, files: list[str], location: list[str] = []):
+    def POST(self, files: list[str]):
         ''' Sends a POST request to the server.
             @param files: list[str] - The files/folders to upload.
             @param location: list[str] - (optional) The location to upload specified files.
@@ -48,12 +48,12 @@ class BaseHTTPSender():
             print("No files specified to upload in POST request.")
             return
 
-        data = {"files": files, "location": location}
+        data = {"files": files}
 
-        return self.send_request("POST", data=data)
+        return self._send_request("POST", data=data)
     
 
-    def PUT(self, files: list[str], location: list[str] = []):
+    def PUT(self, files: list[str]):
         ''' Sends a PUT request to the server.
             @param files: list[str] - The files/folders to update.
             @param location: list[str] - (optional) The location to update specified files.
@@ -64,12 +64,12 @@ class BaseHTTPSender():
             print("No files specified to update in PUT request.")
             return
 
-        data = {"files": files, "location": location}
+        data = {"files": files}
 
-        return self.send_request("PUT", data=data)
+        return self._send_request("PUT", data=data)
     
 
-    def DELETE(self, files: list[str], location: list[str] = []):
+    def DELETE(self, files: list[str]):
         ''' Sends a DELETE request to the server.
             @param files: list[str] - The files/folders to delete.
             @param location: list[str] - (optional) The location to delete specified files.
@@ -80,12 +80,12 @@ class BaseHTTPSender():
             print("No files specified to delete in DELETE request.")
             return
 
-        data = {"files": files, "location": location}
+        data = {"files": files}
 
-        return self.send_request("DELETE", data=data)
+        return self._send_request("DELETE", data=data)
     
 
-    def send_request(self, method: str, params: dict | None = None, data: dict | None = None):
+    def _send_request(self, method: str, params: dict | None = None, data: dict | None = None):
         ''' Main method to send HTTP requests to the server. Encrypts with specified TLS version and cipher suite
             if specified.
         '''

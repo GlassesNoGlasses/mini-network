@@ -21,6 +21,7 @@ class BaseServer(HTTPServer):
         try:
             if not os.path.isdir(root_dir):
                 raise FileNotFoundError(f"Invalid root directory: {root_dir}")
+            pass # TODO: put something here.
             
         except FileNotFoundError:
             option_message = f'''Invalid root directory: {root_dir}. Please select an option to proceed:
@@ -60,5 +61,5 @@ class BaseServer(HTTPServer):
 
 
 if __name__ == '__main__':
-    with BaseServer("/lolol/", ('', PORT), HTTPRequestHandler) as server:
+    with BaseServer("./test", ('', PORT), HTTPRequestHandler) as server:
         server.serve_forever()

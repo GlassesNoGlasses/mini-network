@@ -10,22 +10,60 @@ The class is used in the BaseServer class in server.py.
 
 '''
 
+import os, fnmatch
 from http.server import BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 
 class HTTPRequestHandler(BaseHTTPRequestHandler):
+
+    def find_files(self, files, duplicates: bool = False) -> dict[str, list[str]]:
+        ''' Finds specified files "files" in the server directory. 
+            @param files: list[str] - The files to find.
+            @param duplicates: bool - (optional) Whether to allow duplicate file names in the response.
+        '''
+
+        root_dir = self.server._root
+        found_files = {file_name.lower(): [] for file_name in files}
+
+        for root, _, dir_files in os.walk(root_dir):
+            for file in dir_files:
+                if file.lower() in found_files:
+                    if not duplicates and not found_files[file]:
+                        found_files[file] = [os.path.join(root, file)]
+                    else:
+                        found_files[file].append(os.path.join(root, file))
+        
+        return found_files
+
     def do_GET(self):
-        server_root = self.server._root
-        print(f"Directory paths: {server_root}")
-
         headers = self.headers
+        url = self.path
+        query_components = parse_qs(urlparse(self.path).query)
         print(f"Headers: {headers}")
+        print(f"URL: {url}")
+        print(f"Query components: {query_components}")
 
+        requested_files = query_components.get("files", [])
+        allow_duplicates = query_components.get("allow_duplicates", False)
+
+        found_files = self.find_files(requested_files, allow_duplicates)
+        print(f"Found files: {found_files}")
+
+        if not found_files:
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        # TODO: modify headers and response based on found files
         self.send_response(200)
-        self.send_header('Content-type','text/html')
+        self.send_header('Content-type','text/html') 
         self.end_headers()
 
-        message = "Hello, World! Here is a GET response"
-        self.wfile.write(bytes(message, "utf8"))
+        for file, locations in found_files.items():
+            for location in locations:
+                with open(location, 'rb') as f:
+                    self.wfile.write(f.read())
+
 
     def do_POST(self):
         self.send_response(200)
