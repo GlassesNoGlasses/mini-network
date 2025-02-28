@@ -18,11 +18,14 @@ class BaseServer(HTTPServer):
         @param bind_and_activate: bool - (optional) Whether to bind and activate the server.
         '''
 
+        print("[INFO]: Initializing BaseServer...")
+
         try:
             if not os.path.isdir(root_dir):
                 raise FileNotFoundError(f"Invalid root directory: {root_dir}")
-            pass # TODO: put something here.
             
+            print(f"[INFO] Starting server at root dir: {root_dir}")
+
         except FileNotFoundError:
             option_message = f'''Invalid root directory: {root_dir}. Please select an option to proceed:
                            1. Create the directory.

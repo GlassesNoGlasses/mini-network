@@ -89,6 +89,8 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type','text/html')
         self.end_headers()
+        print(self.headers)
+        print(self.rfile.read(int(self.headers['Content-Length'])))
 
         message = "Hello, World! Here is a POST response"
         self.wfile.write(bytes(message, "utf8"))
@@ -97,6 +99,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type','text/html')
         self.end_headers()
+
 
         message = "Hello, World! Here is a PUT response"
         self.wfile.write(bytes(message, "utf8"))
