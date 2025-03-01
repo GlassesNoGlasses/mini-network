@@ -19,6 +19,7 @@ class BaseHTTPSender():
         ''' Initializes the BaseHTTPSender class with the URL of the server to send requests to. 
             Optionally, the TLS and cipher suite can be specified.
         '''
+
         self.url = url
         self.tls = tls
 
@@ -62,9 +63,10 @@ class BaseHTTPSender():
             #     print(f"File {file} is not a valid file.")
             #     return
         
-        data = {'locations': locations, 'replace': replacement}
+        param = {'replace': replacement}
+        headers = {'Location': ';'.join(locations)}
 
-        return self._send_request("POST", data=data , files=files)
+        return self._send_request("POST", params=param, files=files, headers=headers)
     
 
     def PUT(self, files: list[str]):
@@ -106,7 +108,40 @@ class BaseHTTPSender():
         return file_name, file_extension
     
 
-    def _send_request(self, method: str, params: dict | None = None, data: dict | None = None, files: list[str] = []):
+    def _craft_file_payload(self, files: list[str], boundary: str) -> bytearray | None:
+        ''' Crafts the file data to be sent in the request.
+            @param files: list[str] - The files to send.
+            @param boundary: str - The boundary string to separate the files.
+            @return bytearray | None - The file payload to send in the request body. Returns None if no files are specified.
+        '''
+
+        if not files:
+            print("[ERROR] No files specified to craft payload.")
+            return
+
+        payload = b''
+        separator = b'\r\n'
+        boundary = f'--{boundary}'.encode(encoding='utf-8') + separator
+        content_disposition = b'Content-Disposition: form-data; name="file"; filename="'
+
+
+        # TODO: add encoding
+        for file in files:
+            f_name, _ = self._parse_file_by_path(file)
+            payload += boundary
+            payload += content_disposition
+            payload += f_name.encode(encoding='utf-8')
+            payload += b'"' + separator + separator
+            with open(file, 'rb') as f:
+                payload += f.read()
+            payload += separator
+        
+        print(payload)
+
+        return payload
+    
+
+    def _send_request(self, method: str, params: dict | None = None, headers: dict | None = None, files: list[str] | None = None):
         ''' Main method to send HTTP requests to the server. Encrypts with specified TLS version and cipher suite
             if specified.
         '''
@@ -115,35 +150,18 @@ class BaseHTTPSender():
 
         try:
             assert method in HTTP_METHODS
-            custom_headers = {}
-            sending_files = None
-
+            data = None
+            custom_headers = headers if headers else {}
+            custom_headers["User-Agent"] = "User101"
 
             # file handling
             if files:
-                sending_files = {}
+                boundary = ''.join(choice(ascii_uppercase + digits) for _ in range(BOUNDARY_LENGTH))
+                custom_headers["Content-Type"] = f"multipart/files; boundary={boundary}"
 
-                # print(files)
-                if len(files) == 1:
-                    f_name, f_ext = self._parse_file_by_path(files[0])
-                    custom_headers["Content-Type"] = f"{CONTENT_TYPE_MAP.get(f_ext, 'application/octet-stream')}"
-                    sending_files[f_name] = open(files[0], 'rb')
-                else:
-                    boundary = ''.join(choice(ascii_uppercase + digits) for _ in range(BOUNDARY_LENGTH))
-                    custom_headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+                data = self._craft_file_payload(files, boundary)
                 
-                    for file in files:
-                        f_name, f_ext = self._parse_file_by_path(file)
-                        sending_files[f_name] = (f_name, open(file, 'rb'), f"{CONTENT_TYPE_MAP.get(f_ext, 'application/octet-stream')}")
-
-            response = requests.request(method, self.url, params=params, data=data, files=sending_files)
-
-            # close any open files
-            if len(sending_files) == 1:
-                list(sending_files.values())[0].close()
-            elif len(sending_files) > 1:
-                for fd in sending_files.values():
-                    fd[1].close()
+            response = requests.request(method, self.url, params=params, data=data, headers=custom_headers)
 
         except AssertionError:
             print(f"Invalid HTTP method: {method}")

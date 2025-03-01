@@ -89,8 +89,38 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type','text/html')
         self.end_headers()
-        print(self.headers)
-        print(self.rfile.read(int(self.headers['Content-Length'])))
+        print(self.path)
+        print("HEADERS: ", self.headers)
+
+        try:
+            # obtain the location, boundary, and content length from the headers
+            location = self.headers['Location'] if 'Location' in self.headers and self.headers['Location'] else './test/server'
+            boundary = self.headers['Content-Type'].split("=")[1]
+            content_length = int(self.headers['Content-Length'])
+            print(f"Location: {location}")
+            print(f"Boundary: {boundary}")
+
+            # TODO: work with data that are not files
+            # handle the POST data
+            post_data_files = self.rfile.read(content_length).split(b'--' + boundary.encode('utf-8'))[1:]
+            print(f"POST data: {post_data_files}")
+
+            for file_data in post_data_files:
+                if file_data:
+                    file_metadata = file_data.split(b'\r\n')
+                    content_disposition = file_metadata[1].decode('utf-8')
+                    file_name = content_disposition.split('filename=')[1].strip('"')
+                    file_content = file_data.split(b'\r\n\r\n')[1]
+                    print(file_content)
+                    with open(f"{location}/{file_name}", 'wb') as f:
+                        f.write(file_content)
+
+
+
+        except KeyError:
+            print("Could not find headers")
+
+
 
         message = "Hello, World! Here is a POST response"
         self.wfile.write(bytes(message, "utf8"))
