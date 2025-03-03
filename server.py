@@ -65,5 +65,5 @@ class BaseServer(HTTPServer):
 
 
 if __name__ == '__main__':
-    with BaseServer("./test", ('', PORT), HTTPRequestHandler) as server:
+    with BaseServer("./test/server", ('', PORT), HTTPRequestHandler) as server:
         server.serve_forever()

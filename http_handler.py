@@ -43,6 +43,10 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         return found_files
 
     def do_GET(self):
+        res_code: int = 200
+        res_message: bytes = b''
+
+        # GET request query handling
         headers = self.headers
         url = self.path
         query_components = parse_qs(urlparse(self.path).query)
@@ -60,35 +64,36 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         print(f"Found files: {found_files}")
 
         if not found_files:
-            self.send_response(404)
-            self.end_headers()
-            return
+            res_code = 404
+            res_message = b'Files not found'
+        else:
+            if len(found_files.keys()) == 1:
+                print("Found single file")
+                file_name = list(found_files.keys())[0]
+                file_location = found_files[file_name][0]
+                with open(file_location, 'rb') as f:
+                    res_message = f.read()
+            else:
+                # Create a zip file containing the found files
+                with ZipFile('GET_files.zip', 'a') as zipf:
+                    for locations in found_files.values():
+                        for file_path in locations:
+                            zipf.write(file_path)
+                # Send the zip file
+                with open('GET_files.zip', 'rb') as f:
+                    res_message = f.read()
         
         # TODO: modify headers and response based on found files
-        self.send_response(200)
+        self.send_response(res_code)
         self.send_header('Content-type','text/html') 
         self.end_headers()
+        self.wfile.write(res_message)
         
-        if len(found_files) == 1:
-            file_name = list(found_files.keys())[0]
-            file_location = found_files[file_name][0]
-            with open(file_location, 'rb') as f:
-                self.wfile.write(f.read())
-        else:
-            # Create a zip file containing the found files
-            with ZipFile('GET_files.zip', 'a') as zipf:
-                for locations in found_files.values():
-                    for file_path in locations:
-                        zipf.write(file_path)
-            # Send the zip file
-            with open('GET_files.zip', 'rb') as f:
-                self.wfile.write(f.read())
-            
+
 
     def do_POST(self):
-        self.send_response(200)
-        self.send_header('Content-type','text/html')
-        self.end_headers()
+        res_code = 200
+        res_message = None
         print(self.path)
         print("HEADERS: ", self.headers)
 
@@ -110,20 +115,21 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                     file_metadata = file_data.split(b'\r\n')
                     content_disposition = file_metadata[1].decode('utf-8')
                     file_name = content_disposition.split('filename=')[1].strip('"')
-                    file_content = file_data.split(b'\r\n\r\n')[1]
-                    print(file_content)
+                    file_content = file_data.split(b'\r\n\r\n')[1].strip(b'\r\n')
                     with open(f"{location}/{file_name}", 'wb') as f:
                         f.write(file_content)
-
-
-
+            
+            res_message = "POST request successful"
         except KeyError:
-            print("Could not find headers")
+            res_code = 400
+            res_message = "Could not find headers"
 
 
 
-        message = "Hello, World! Here is a POST response"
-        self.wfile.write(bytes(message, "utf8"))
+        self.send_response(res_code)
+        self.send_header('Content-type','text/html')
+        self.end_headers()
+        self.wfile.write(bytes(res_message, "utf8"))
     
     def do_PUT(self):
         self.send_response(200)
