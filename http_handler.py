@@ -11,16 +11,19 @@ The class is used in the BaseServer class in server.py.
 '''
 
 import os, fnmatch
+from shutil import rmtree
 from zipfile import ZipFile
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 class HTTPRequestHandler(BaseHTTPRequestHandler):
 
-    def find_files(self, files: list[str], duplicates: bool = False) -> dict[str, list[str]]:
-        ''' Finds specified files "files" in the server directory. 
-            @param files: list[str] - The files to find.
+    def find_files(self, files: list[str], duplicates: bool = False, location: str | None = None) -> dict[str, list[str]]:
+        ''' Finds specified files/dirs "files" in the server directory. 
+            @param files: list[str] - The files/dirs to find.
             @param duplicates: bool - (optional) Whether to allow duplicate file names in the response. 
+            @param location: str - (optional) The location to search for the files.
+            If empty, searches from root server directory.
             Returns last found file if duplicates is False, else returns all found files.
         '''
         print(f"Finding files: {files}")
@@ -29,18 +32,26 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         if not files:
             return 
 
-        root_dir = self.server._root
+        dir_path = location if location else self.server._root
         found_files = {file_name.lower(): [] for file_name in files}
 
-        for root, _, dir_files in os.walk(root_dir):
+        for root, dirs, dir_files in os.walk(dir_path):
+            # TODO: refactor this if possible; same logic
             for file in dir_files:
                 if file.lower() in found_files:
                     if not duplicates:
                         found_files[file] = [os.path.join(root, file)]
                     else:
                         found_files[file].append(os.path.join(root, file))
+            for dir in dirs:
+                if dir.lower() in found_files:
+                    if not duplicates:
+                        found_files[dir] = [os.path.join(root, dir)]
+                    else:
+                        found_files[dir].append(os.path.join(root, dir))
         
         return found_files
+    
 
     def do_GET(self):
         res_code: int = 200
@@ -131,6 +142,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(bytes(res_message, "utf8"))
     
+
     def do_PUT(self):
         self.send_response(200)
         self.send_header('Content-type','text/html')
@@ -140,11 +152,53 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         message = "Hello, World! Here is a PUT response"
         self.wfile.write(bytes(message, "utf8"))
     
+
     def do_DELETE(self):
-        self.send_response(200)
+        res_code = 200
+        res_message = ''
+
+        # DELETE request query handling
+        headers = self.headers
+        url = self.path
+        query_components = parse_qs(urlparse(self.path).query)
+        print(f"Headers: {headers}")
+        print(f"URL: {url}")
+        print(f"Query components: {query_components}")
+
+        files_to_delete = query_components.get("files", '')
+        file_location = headers['Content-Location']
+        print(f"Files to delete: {files_to_delete}")
+        print(f"File location: {file_location}")
+
+        if not file_location or not files_to_delete:
+            res_code = 400
+            res_message = 'Could not find files to delete'
+        
+        try:
+            found_files = self.find_files(files_to_delete, duplicates=True, location=file_location)
+
+            if not found_files:
+                res_code = 404
+                res_message = 'Files not found'
+            else:
+                for _, locations in found_files.items():
+                    for file_path in locations:
+                        if os.path.isdir(file_path):
+                            rmtree(file_path)
+                        else:
+                            os.remove(file_path)
+
+                file_names = ','.join(list(found_files.keys()))
+                res_message = f'Files {file_names} deleted successfully'
+        except Exception as e:
+            print(f"Error deleting files: {e}")
+            res_code = 500
+            res_message = 'Error deleting files'
+
+
+        self.send_response(res_code)
         self.send_header('Content-type','text/html')
         self.end_headers()
 
-        message = "Hello, World! Here is a DELETE response"
-        self.wfile.write(bytes(message, "utf8"))
+        self.wfile.write(bytes(res_message, "utf8"))
 

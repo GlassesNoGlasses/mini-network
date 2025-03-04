@@ -17,7 +17,7 @@ PORT = 8080
 # HTTP Constants
 HTTP_METHODS = {'GET', 'POST', 'PUT', 'DELETE'}
 
-RESPONSE_CODES = {200, 400, 404, 500}
+RESPONSE_CODES = {200, 201, 400, 404, 500}
 
 CONTENT_TYPES = {'application/json', 'application/xml', 'text/html', 'text/plain', 'multipart/form-data',
                  'image/jpeg', 'image/png', 'image/gif', 'file/*', 'file/.zip', 'traversal/*'}

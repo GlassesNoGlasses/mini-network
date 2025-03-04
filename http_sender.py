@@ -83,27 +83,55 @@ class BaseHTTPSender():
         return self._send_request("PUT", files=files)
     
 
-    def DELETE(self, files: list[str]):
+    def DELETE(self, files: list[str], location: str) -> requests.Response | None:
         ''' Sends a DELETE request to the server.
             @param files: list[str] - The files/folders to delete.
-            @param location: list[str] - (optional) The location to delete specified files.
-            If empty, deletes files in root directory.
+            @param location: list[str] - The location to delete specified files. MUST BE SPECIFIED.
         '''
 
-        if not files:
-            print("No files specified to delete in DELETE request.")
+        if not files or not location:
+            print("Missing files or location in DELETE request.")
             return
+        
+        custom_headers = {'Content-Location': location}
+        params = {'files': ';'.join(files)}
 
-        return self._send_request("DELETE", files=files)
+        return self._send_request("DELETE", params=params, headers=custom_headers)
     
 
-    def _parse_file_by_path(self, file: str) -> tuple[str, str]:
+    def _validate_path(self, path: str) -> bool:
+        ''' Validates the path to ensure it is a valid file or directory. Backwards traversal is not 
+            allowed by clients and should be done by the server via GET requests.
+            @param path: str - The path to validate.
+            @return bool - True if the path is valid, False otherwise.
+        '''
+
+        path_content = path.split('/')
+
+        for i in range(len(path_content)):
+            # check for backwards traversal or invalid characters
+            if path_content[i] == ".." or '/' in path_content[i] or '\\' in path_content[i]:
+                print(f"Backwards traversal is not allowed in client.")
+                return False
+
+        if not os.path.exists(path):
+            print(f"Path {path} does not exist.")
+            return False
+        elif not os.path.isfile(path) and not os.path.isdir(path):
+            print(f"Path {path} is not a valid file or directory.")
+            return False
+    
+        return True
+
+
+    def _parse_file_by_path(self, file_path: str) -> tuple[str, str]:
         ''' Parses the file path to extract the file name and file extension.
             @param file: str - The file path to parse.
-            @return tuple[str, str] - A tuple containing the file name and file extension.
+            @return tuple[str, str] - A tuple containing the (file name, file extension).
         '''
-        file_name = os.path.basename(file)
-        file_extension = os.path.splitext(file)[1]
+
+        file_name = os.path.basename(file_path)
+        file_extension = os.path.splitext(file_path)[1]
 
         return file_name, file_extension
     
@@ -141,7 +169,8 @@ class BaseHTTPSender():
         return payload
     
 
-    def _send_request(self, method: str, params: dict | None = None, headers: dict | None = None, files: list[str] | None = None):
+    def _send_request(self, method: str, params: dict | None = None, 
+                      headers: dict | None = None, files: list[str] | None = None) -> requests.Response | None:
         ''' Main method to send HTTP requests to the server. Encrypts with specified TLS version and cipher suite
             if specified.
         '''
@@ -165,7 +194,8 @@ class BaseHTTPSender():
 
         except AssertionError:
             print(f"Invalid HTTP method: {method}")
-            return
+            # TODO: prompt user for another request
+            return 
         except requests.exceptions.RequestException as e:
             print(f"An error occurred while sending the request: {e}")
             return
