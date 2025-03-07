@@ -24,6 +24,7 @@ class BaseServer(HTTPServer):
             if not os.path.isdir(root_dir):
                 raise FileNotFoundError(f"Invalid root directory: {root_dir}")
             
+            self.current_dir = root_dir
             print(f"[INFO] Starting server at root dir: {root_dir}")
             print(f"[SERVER] WAITING FOR REPONSES ON ADDRESS: {server_address}")
 

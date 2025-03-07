@@ -24,12 +24,15 @@ class BaseHTTPSender():
         self.tls = tls
 
     
-    def GET(self, files: list[str], duplicates: bool = False):
+    def GET(self, files: list[str], duplicates: bool = False) -> requests.Response | None:
         ''' Sends a GET request to the server. 
+
             @param files: list[str] - The files/folders to retrieve.
             @param location: list[str] - (optional) The location to retrieve specified files.
             If empty, searches entire server.
             @param duplicates: bool - (optional) Whether to retrieve duplicate files from multiple locations.
+            :returns: The response from the server.
+            :rtype: requests.Response | None
         '''
 
         if not files:
@@ -41,13 +44,14 @@ class BaseHTTPSender():
         return self._send_request("GET", params=params)
     
 
-    def POST(self, files: list[str], locations: list[str] = [], replacement: bool = True):
+    def POST(self, files: list[str], locations: list[str] = []) -> requests.Response | None:
         ''' Sends a POST request to the server.
+
             @param files: list[str] - The files to upload.
             @param locations: list[str] - (optional) The location(s) to upload specified files.
             If empty, uploads to root directory. Defaults to empty.
-            @param replacement: bool - (optional) Whether to replace existing files with the same name.
-            Defaults to True.
+            :rtype: requests.Response | None
+            :returns: The response from the server.
         '''
 
         if not files:
@@ -63,30 +67,39 @@ class BaseHTTPSender():
             #     print(f"File {file} is not a valid file.")
             #     return
         
-        param = {'replace': replacement}
-        headers = {'Location': ';'.join(locations)}
+        headers = {'Content-Location': ';'.join(locations)}
 
-        return self._send_request("POST", params=param, files=files, headers=headers)
+        return self._send_request("POST", files=files, headers=headers)
     
 
-    def PUT(self, files: list[str]):
-        ''' Sends a PUT request to the server.
-            @param files: list[str] - The files/folders to update.
-            @param location: list[str] - (optional) The location to update specified files.
-            If empty, updates files in root directory.
+    def PUT(self, files: dict[str, str], location: str | None = None) -> requests.Response | None:
+        ''' Sends a PUT request to the server. PUT requests update/replace files on the server.
+            @param files: dict[str, str] - The files/folders to update in the form `{path_to_file: new_file_name}`.
+            If no new file name is specified, the file is created/replaced with the same name.
+            @param location: str - (optional) The location to update specified files. If empty, updates in current directory.
+            :returns: The response from the server.
+            :rtype: requests.Response | None
         '''
 
         if not files:
             print("No files specified to update in PUT request.")
             return
+        
+        # for file in files.keys():
+        #     if not self._validate_path(file) or os.path.isdir(files):
+        #         return
 
-        return self._send_request("PUT", files=files)
+        custom_headers = {'Content-Location': location}
+
+        return self._send_request("PUT", files=files, headers=custom_headers)
     
 
     def DELETE(self, files: list[str], location: str) -> requests.Response | None:
         ''' Sends a DELETE request to the server.
             @param files: list[str] - The files/folders to delete.
             @param location: list[str] - The location to delete specified files. MUST BE SPECIFIED.
+            :returns: The response from the server.
+            :rtype: requests.Response | None
         '''
 
         if not files or not location:
@@ -100,10 +113,13 @@ class BaseHTTPSender():
     
 
     def _validate_path(self, path: str) -> bool:
-        ''' Validates the path to ensure it is a valid file or directory. Backwards traversal is not 
-            allowed by clients and should be done by the server via GET requests.
+        ''' Validates the path to ensure it is a valid file or directory.
+
+            Backwards traversal is not allowed by clients and should be done by the server via GET requests.
+
             @param path: str - The path to validate.
-            @return bool - True if the path is valid, False otherwise.
+            :rtype: bool
+            :return: True if the path is valid, False otherwise.
         '''
 
         path_content = path.split('/')
@@ -127,7 +143,8 @@ class BaseHTTPSender():
     def _parse_file_by_path(self, file_path: str) -> tuple[str, str]:
         ''' Parses the file path to extract the file name and file extension.
             @param file: str - The file path to parse.
-            @return tuple[str, str] - A tuple containing the (file name, file extension).
+            :return: A tuple containing the (file name, file extension).
+            :rtype: tuple[str, str]
         '''
 
         file_name = os.path.basename(file_path)
@@ -140,8 +157,13 @@ class BaseHTTPSender():
         ''' Crafts the file data to be sent in the request.
             @param files: list[str] - The files to send.
             @param boundary: str - The boundary string to separate the files.
-            @return bytearray | None - The file payload to send in the request body. Returns None if no files are specified.
+            :return: The file payload to send in the request body. Returns None if no files are specified.
+            :rtype: bytearray | None
         '''
+
+        # Payload Format: 
+        #   --boundary\r\nConent-Disposition: form-data; name="file1"; filename="file1_name"\r\n\r\nfile1_data\r\n
+        #   --boundary\r\nConent-Disposition: form-data; name="file2"; filename="file2_name"\r\n\r\nfile2_data\r\n
 
         if not files:
             print("[ERROR] No files specified to craft payload.")
@@ -164,7 +186,6 @@ class BaseHTTPSender():
                 payload += f.read()
             payload += separator
         
-        print(payload)
 
         return payload
     
