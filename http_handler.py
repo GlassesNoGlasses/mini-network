@@ -61,7 +61,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             @param file_data: bytes - The file data to parse.
             @param boundary: str - The boundary string to split the file data.
             :rtype: dict[str, bytes]
-            :return: The parsed file data `{f_name: f_data}`.
+            :return: The parsed file data `{f_name: {data: f_data, [headers...]}}`.
             :raises: ValueError if invalid file data found.
         '''
 
@@ -71,10 +71,18 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         for data in file_data:
             if data:
                 file_metadata = data.split(b'\r\n')
-                content_disposition = file_metadata[1].decode('utf-8')
-                file_name = content_disposition.split('filename=')[1].strip('"')
+                content_disposition = file_metadata[1].decode('utf-8').split(': ')[1].split('; ')
+                file_name = content_disposition[2].split('=')[1].strip('"')
+                parsed_files[file_name] = {}
+
+                print(f"CONTENT DISPOSITION FOR: {file_name}", content_disposition)
+
+                for i in range(3, len(content_disposition)):
+                    header = content_disposition[i].split('=')
+                    parsed_files[file_name][header[0]] = header[1].strip('"')
+
                 file_content = data.split(b'\r\n\r\n')[1].strip(b'\r\n')
-                parsed_files[file_name] = file_content
+                parsed_files[file_name]['data'] = file_content
 
         return parsed_files
 
@@ -148,9 +156,8 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
 
             for file_name, file_content in file_data.items():
                 for location in locations:
-                    if not os.path.exists(f"{location}/{file_name}"):
-                        with open(f"{location}/{file_name}", 'wb') as f:
-                            f.write(file_content)
+                    with open(f"{location}/{file_name}", 'wb+') as f:
+                        f.write(file_content['data'])
             
             res_message = "POST request successful"
         except KeyError:
@@ -171,7 +178,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
 
         try:
             # obtain the location, boundary, and content length from the headers
-            locations: list[str] = self.headers['Content-Location'] if 'Content-Location' in self.headers and self.headers['Content-Location'] else './test/server'
+            location: str = self.headers['Content-Location'] if 'Content-Location' in self.headers and self.headers['Content-Location'] else './test/server'
             boundary: str = self.headers['Content-Type'].split("=")[1]
             content_length : int = int(self.headers['Content-Length'])
             print(f"Content-Location: {location}")
@@ -179,16 +186,18 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
     
             # handle PUT files
             file_data = self._parse_file_data(self.rfile.read(content_length), boundary)
+            print("FILE DATA:", file_data)
 
             for file_name, file_content in file_data.items():
-                for location in locations:
-                    with open(f"{location}/{file_name}", 'wb') as f:
-                        f.write(file_content)
+                with open(f"{location}/{file_name}", 'wb+') as f:
+                    f.write(file_content['data'])
+                os.rename(f"{location}/{file_name}", f"{location}/{file_content['new_name']}")
             
             res_message = "PUT request successful"
         
         except KeyError:
             res_code = 400
+            res_message = "Could not find headers"
 
         self.send_response(res_code)
         self.send_header('Content-type','text/html')

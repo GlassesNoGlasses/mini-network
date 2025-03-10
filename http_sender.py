@@ -89,9 +89,10 @@ class BaseHTTPSender():
         #     if not self._validate_path(file) or os.path.isdir(files):
         #         return
 
-        custom_headers = {'Content-Location': location}
+        custom_headers = {'Content-Location': location} if location else None
+        disposition_headers = {self._parse_file_by_path(file)[0]: {'new_name': new_name} for file, new_name in files.items()}
 
-        return self._send_request("PUT", files=files, headers=custom_headers)
+        return self._send_request("PUT", files=list(files.keys()), headers=custom_headers, disp_headers=disposition_headers)
     
 
     def DELETE(self, files: list[str], location: str) -> requests.Response | None:
@@ -153,17 +154,21 @@ class BaseHTTPSender():
         return file_name, file_extension
     
 
-    def _craft_file_payload(self, files: list[str], boundary: str) -> bytearray | None:
+    def _craft_file_payload(self, files: list[str], boundary: str, 
+                            disposition_headers: dict[str, dict[str, str]] | None = None) -> bytearray | None:
         ''' Crafts the file data to be sent in the request.
             @param files: list[str] - The files to send.
             @param boundary: str - The boundary string to separate the files.
+            @param disposition_headers: dict[str, dict[str, str]] - (optional) Additional content disposition
+            headers for each file. Maps {`file_name`: {`header_name`: `header_value`}}. `file_name` must be in `files`.
+            :rtype: bytearray | None
             :return: The file payload to send in the request body. Returns None if no files are specified.
             :rtype: bytearray | None
         '''
 
         # Payload Format: 
-        #   --boundary\r\nConent-Disposition: form-data; name="file1"; filename="file1_name"\r\n\r\nfile1_data\r\n
-        #   --boundary\r\nConent-Disposition: form-data; name="file2"; filename="file2_name"\r\n\r\nfile2_data\r\n
+        #   --boundary\r\nConent-Disposition: form-data; name="file1"; filename="file1_name"; {disposition_headers}\r\n\r\nfile1_data\r\n
+        #   --boundary\r\nConent-Disposition: form-data; name="file2"; filename="file2_name"; {disposition_headers}\r\n\r\nfile2_data\r\n
 
         if not files:
             print("[ERROR] No files specified to craft payload.")
@@ -181,17 +186,23 @@ class BaseHTTPSender():
             payload += boundary
             payload += content_disposition
             payload += f_name.encode(encoding='utf-8')
+
+            # add additional disposition headers if specified
+            if disposition_headers and f_name in disposition_headers:
+                for header, value in disposition_headers[f_name].items():
+                    payload += f'"; {header}="{value}'.encode(encoding='utf-8')
+
             payload += b'"' + separator + separator
             with open(file, 'rb') as f:
                 payload += f.read()
             payload += separator
-        
 
         return payload
     
 
     def _send_request(self, method: str, params: dict | None = None, 
-                      headers: dict | None = None, files: list[str] | None = None) -> requests.Response | None:
+                      headers: dict | None = None, files: list[str] | None = None,
+                      disp_headers: dict[str, dict[str, str]] | None = None) -> requests.Response | None:
         ''' Main method to send HTTP requests to the server. Encrypts with specified TLS version and cipher suite
             if specified.
         '''
@@ -209,7 +220,7 @@ class BaseHTTPSender():
                 boundary = ''.join(choice(ascii_uppercase + digits) for _ in range(BOUNDARY_LENGTH))
                 custom_headers["Content-Type"] = f"multipart/files; boundary={boundary}"
 
-                data = self._craft_file_payload(files, boundary)
+                data = self._craft_file_payload(files, boundary, disposition_headers=disp_headers)  
                 
             response = requests.request(method, self.url, params=params, data=data, headers=custom_headers)
 
