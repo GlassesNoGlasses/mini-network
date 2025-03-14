@@ -15,10 +15,14 @@ from shutil import rmtree
 from zipfile import ZipFile
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+from secrets import choice
+from string import ascii_uppercase, digits
+from constants import BOUNDARY_LENGTH
 
 class HTTPRequestHandler(BaseHTTPRequestHandler):
 
-    def find_files(self, files: list[str], duplicates: bool = False, location: str | None = None) -> dict[str, list[str]]:
+    def find_files(self, files: list[str], duplicates: bool = False, 
+                   location: str | None = None) -> dict[str, list[str]]:
         ''' Finds specified files/dirs "files" in the server directory.
 
             @param files: list[str] - The files/dirs to find.
@@ -85,11 +89,25 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                 parsed_files[file_name]['data'] = file_content
 
         return parsed_files
+    
+
+    def send_headers(self, headers: dict[str, str] | None) -> None:
+        ''' Sends headers to the client. Defaults to sending Content-Type: text/html if no headers are provided.
+        
+            @param headers: dict[str, str] - The headers to send.
+        '''
+
+        if not headers:
+            headers = {'Content-Type': 'text/html'}
+        
+        for header, value in headers.items():
+            self.send_header(header, value)
+        self.end_headers()
 
 
     def do_GET(self):
         res_code: int = 200
-        res_message = None
+        res_message: bytes | None = None
 
         # GET request query handling
         headers = self.headers
@@ -130,23 +148,21 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         
         # TODO: modify headers and response based on found files
         self.send_response(res_code)
-        self.send_header('Content-type','text/html') 
-        self.end_headers()
+        self.send_headers()
         self.wfile.write(res_message)
         
 
     def do_POST(self):
         res_code: int = 200
-        res_message = None
+        res_message: bytes | None = None
+        res_headers = {}
         print(self.path)
         print("HEADERS: ", self.headers)
 
         try:
-            # obtain the location, boundary, and content length from the headers
-            locations: list[str] = self.headers['Content-Location'].split(';') if 'Content-Location' in self.headers and self.headers['Content-Location'] else ['./test/server']
+            # obtain the boundary, and content length from the headers
             boundary: str = self.headers['Content-Type'].split("=")[1]
             content_length: int = int(self.headers['Content-Length'])
-            print(f"Content-Location: {locations}")
             print(f"Boundary: {boundary}")
 
             # TODO: work with data that are not files
@@ -155,33 +171,31 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             file_data = self._parse_file_data(self.rfile.read(content_length), boundary)
 
             for file_name, file_content in file_data.items():
-                for location in locations:
-                    with open(f"{location}/{file_name}", 'wb+') as f:
-                        f.write(file_content['data'])
-            
-            res_message = "POST request successful"
+                with open(f"{self.server.current_dir}/{file_name}", 'wb+') as f:
+                    f.write(file_content['data'])
+        
+            res_boundary, res_message = self._list_file_payload()
+            res_headers['Content-Type'] = 'multipart/list' + f"; boundary={res_boundary}"
         except KeyError:
             res_code = 400
-            res_message = "Could not find headers"
+            res_message = b"Could not find headers"
 
         self.send_response(res_code)
-        self.send_header('Content-type','text/html')
-        self.end_headers()
-        self.wfile.write(bytes(res_message, "utf8"))
+        self.send_headers(res_headers)
+        self.wfile.write(res_message)
     
 
     def do_PUT(self):
         res_code: int = 200
-        res_message = None
+        res_message: bytes | None = None
+        res_headers = {}
         print(self.path)
         print("HEADERS: ", self.headers)
 
         try:
-            # obtain the location, boundary, and content length from the headers
-            location: str = self.headers['Content-Location'] if 'Content-Location' in self.headers and self.headers['Content-Location'] else './test/server'
+            # obtain the boundary, and content length from the headers
             boundary: str = self.headers['Content-Type'].split("=")[1]
             content_length : int = int(self.headers['Content-Length'])
-            print(f"Content-Location: {location}")
             print(f"Boundary: {boundary}")
     
             # handle PUT files
@@ -189,26 +203,26 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             print("FILE DATA:", file_data)
 
             for file_name, file_content in file_data.items():
-                with open(f"{location}/{file_name}", 'wb+') as f:
+                with open(f"{self.server.current_dir}/{file_name}", 'wb+') as f:
                     f.write(file_content['data'])
-                os.rename(f"{location}/{file_name}", f"{location}/{file_content['new_name']}")
+                os.rename(f"{self.server.current_dir}/{file_name}", f"{self.server.current_dir}/{file_content['new_name']}")
             
-            res_message = "PUT request successful"
+            res_boundary, res_message = self._list_file_payload()
+            res_headers['Content-Type'] = 'multipart/list' + f"; boundary={res_boundary}"
         
         except KeyError:
             res_code = 400
-            res_message = "Could not find headers"
+            res_message = b"Could not find headers"
 
         self.send_response(res_code)
-        self.send_header('Content-type','text/html')
-        self.end_headers()
-
-        self.wfile.write(bytes(res_message, "utf8"))
+        self.send_headers(res_headers)
+        self.wfile.write(res_message)
     
 
     def do_DELETE(self):
         res_code: int = 200
-        res_message = None
+        res_message: bytes | None = None
+        res_headers = {}
 
         # DELETE request query handling
         headers = self.headers
@@ -219,20 +233,18 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         print(f"Query components: {query_components}")
 
         files_to_delete = query_components.get("files", '')
-        file_location = headers['Content-Location']
         print(f"Files to delete: {files_to_delete}")
-        print(f"File location: {file_location}")
 
-        if not file_location or not files_to_delete:
+        if not files_to_delete:
             res_code = 400
-            res_message = 'Could not find files to delete'
+            res_message = b'Could not find files to delete'
         
         try:
-            found_files = self.find_files(files_to_delete, duplicates=True, location=file_location)
+            found_files = self.find_files(files_to_delete, duplicates=True)
 
             if not found_files:
                 res_code = 404
-                res_message = 'Files not found'
+                res_message = b'Files not found'
             else:
                 for _, locations in found_files.items():
                     for file_path in locations:
@@ -241,17 +253,105 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                         else:
                             os.remove(file_path)
 
-                file_names = ','.join(list(found_files.keys()))
-                res_message = f'Files {file_names} deleted successfully'
+                res_boundary, res_message = self._list_file_payload()
+                res_headers['Content-Type'] = 'multipart/list' + f"; boundary={res_boundary}"
         except Exception as e:
             print(f"Error deleting files: {e}")
             res_code = 500
-            res_message = 'Error deleting files'
+            res_message = b'Error deleting files'
 
 
         self.send_response(res_code)
-        self.send_header('Content-type','text/html')
-        self.end_headers()
+        self.send_headers(res_headers)
+        self.wfile.write(res_message)
 
-        self.wfile.write(bytes(res_message, "utf8"))
+
+    def do_PATCH(self):
+        res_code: int = 200
+        res_message: bytes | None = None
+        res_headers = {}
+
+        # PATCH request query handling
+        headers = self.headers
+        url = self.path
+        query_components = parse_qs(urlparse(self.path).query)
+        print(f"Headers: {headers}")
+        print(f"URL: {url}")
+        print(f"Query components: {query_components}")
+
+        cd_dir = query_components.get("dir", [])
+
+        if not cd_dir:
+            res_code = 400
+            res_message = f'Could not find {cd_dir} to change directory'.encode('utf-8')
+        else:
+            try:
+                self._change_client_dir(cd_dir[0])
+                res_boundary, res_message = self._list_file_payload()
+                res_headers['Content-Type'] = 'multipart/list' + f"; boundary={res_boundary}"
+            except Exception as e:
+                print(f"Error changing directory: {e}")
+                res_code = 500
+                res_message = f'Error changing directory to {cd_dir[0]} - {e}'.encode('utf-8')
+
+        self.send_response(res_code)
+        self.send_headers(res_headers)
+        self.wfile.write(res_message)
+
+
+    def _list_file_payload(self) -> tuple[bytes, bytes]:
+        ''' Lists the files in the current directory and returns the payload.
+
+            :rtype: tuple[str, bytes]
+            :return: Returns a tuple containing (`res_boundary`, `res_boundary + payload + res_boundary`) 
+            of the files in the current directory.
+        '''
+
+        current_dir = self.server.current_dir
+        files = os.listdir(current_dir)
+        boundary = '--' + ''.join(choice(ascii_uppercase + digits) for _ in range(BOUNDARY_LENGTH)) + '--'
+        payload = boundary.encode('utf-8') + b'\r\n'
+
+        for file in files:
+            payload += f"{file}\r\n".encode('utf-8')
+        
+        payload += boundary.encode('utf-8')
+
+        return (boundary, payload)
+
+
+    def _change_client_dir(self, cd_dir: str) -> bool:
+        ''' Changes client active directory. Returns True if directory change was successful.
+            Raises ValueError if invalid path is given. Raises PermissionError if path is not allowed.
+
+            @param path: cd_dir - The directory to change to.
+            :raises: ValueError if invalid path is given.
+            :raises: PermissionError if path change is not allowed.
+            :rtype: bool
+            :return: True if directory change is successful for user.
+        '''
+
+        if cd_dir == '.':
+            return True
+    
+        current_dir = self.server.current_dir.split('/')
+        
+        # TODO: check user permissions to change to higher directories
+        if cd_dir == '..':
+            if len(current_dir) == 1:
+                raise PermissionError("Invalid permissiosn to change to higher directory")
+            elif len(current_dir) > 1:
+                current_dir.pop()
+        elif "\\" in cd_dir or "/" in cd_dir:
+            raise ValueError(f"Invalid directory path {cd_dir}")
+        elif cd_dir in os.listdir(self.server.current_dir):
+            current_dir.append(cd_dir)
+        else:
+            raise ValueError(f"No existing directory {cd_dir} in {self.server.current_dir}")
+        
+        self.server.current_dir = '/'.join(current_dir)
+        return True
+    
+
+        
 

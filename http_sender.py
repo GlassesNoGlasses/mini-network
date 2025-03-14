@@ -44,12 +44,10 @@ class BaseHTTPSender():
         return self._send_request("GET", params=params)
     
 
-    def POST(self, files: list[str], locations: list[str] = []) -> requests.Response | None:
-        ''' Sends a POST request to the server.
+    def POST(self, files: list[str]) -> requests.Response | None:
+        ''' Sends a POST request to the server. POST requests uploads files `files` to the server at user's current path.
 
             @param files: list[str] - The files to upload.
-            @param locations: list[str] - (optional) The location(s) to upload specified files.
-            If empty, uploads to root directory. Defaults to empty.
             :rtype: requests.Response | None
             :returns: The response from the server.
         '''
@@ -67,16 +65,13 @@ class BaseHTTPSender():
             #     print(f"File {file} is not a valid file.")
             #     return
         
-        headers = {'Content-Location': ';'.join(locations)}
-
-        return self._send_request("POST", files=files, headers=headers)
+        return self._send_request("POST", files=files)
     
 
-    def PUT(self, files: dict[str, str], location: str | None = None) -> requests.Response | None:
-        ''' Sends a PUT request to the server. PUT requests update/replace files on the server.
+    def PUT(self, files: dict[str, str]) -> requests.Response | None:
+        ''' Sends a PUT request to the server. PUT requests update/replace files on the server at user's current path.
             @param files: dict[str, str] - The files/folders to update in the form `{path_to_file: new_file_name}`.
             If no new file name is specified, the file is created/replaced with the same name.
-            @param location: str - (optional) The location to update specified files. If empty, updates in current directory.
             :returns: The response from the server.
             :rtype: requests.Response | None
         '''
@@ -88,30 +83,44 @@ class BaseHTTPSender():
         # for file in files.keys():
         #     if not self._validate_path(file) or os.path.isdir(files):
         #         return
+    
+        parsed_files = {self._parse_file_by_path(file)[0]: new_name for file, new_name in files.items()}
+        disposition_headers = {file: {'new_name': new_name if new_name else file} for file, new_name in parsed_files.items()}
 
-        custom_headers = {'Content-Location': location} if location else None
-        disposition_headers = {self._parse_file_by_path(file)[0]: {'new_name': new_name} for file, new_name in files.items()}
-
-        return self._send_request("PUT", files=list(files.keys()), headers=custom_headers, disp_headers=disposition_headers)
+        return self._send_request("PUT", files=list(files.keys()), disp_headers=disposition_headers)
     
 
-    def DELETE(self, files: list[str], location: str) -> requests.Response | None:
-        ''' Sends a DELETE request to the server.
+    def DELETE(self, files: list[str]) -> requests.Response | None:
+        ''' Sends a DELETE request to the server. Removes files/dirs from the server.
             @param files: list[str] - The files/folders to delete.
-            @param location: list[str] - The location to delete specified files. MUST BE SPECIFIED.
             :returns: The response from the server.
             :rtype: requests.Response | None
         '''
 
-        if not files or not location:
-            print("Missing files or location in DELETE request.")
+        if not files:
+            print("Missing files in DELETE request.")
             return
         
-        custom_headers = {'Content-Location': location}
         params = {'files': ';'.join(files)}
 
-        return self._send_request("DELETE", params=params, headers=custom_headers)
-    
+        return self._send_request("DELETE", params=params)
+
+
+    def PATCH(self, dir: str) -> requests.Response | None:
+        ''' Sends a PATCH request to the server. Changes directory of current user path.
+            @param dir: str - The new directory to change to.
+            :returns: The response from the server.
+            :rtype: requests.Response | None
+        '''
+
+        if not dir:
+            print("No directory specified in PATCH request.")
+            return
+        
+        custom_headers = {'Content-Type': 'traversal/*'}
+        
+        return self._send_request("PATCH", params={'dir': dir}, headers=custom_headers)
+        
 
     def _validate_path(self, path: str) -> bool:
         ''' Validates the path to ensure it is a valid file or directory.

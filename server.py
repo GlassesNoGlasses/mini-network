@@ -26,7 +26,7 @@ class BaseServer(HTTPServer):
             
             self.current_dir = root_dir
             print(f"[INFO] Starting server at root dir: {root_dir}")
-            print(f"[SERVER] WAITING FOR REPONSES ON ADDRESS: {server_address}")
+            print(f"[SERVER] WAITING FOR REQUESTS ON ADDRESS: {server_address}")
 
         except FileNotFoundError:
             option_message = f'''Invalid root directory: {root_dir}. Please select an option to proceed:

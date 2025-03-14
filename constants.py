@@ -15,12 +15,12 @@ PORT = 8080
 
 
 # HTTP Constants
-HTTP_METHODS = {'GET', 'POST', 'PUT', 'DELETE'}
+HTTP_METHODS = {'GET', 'POST', 'PUT', 'DELETE', 'PATCH'}
 
 RESPONSE_CODES = {200, 201, 400, 404, 500}
 
 CONTENT_TYPES = {'application/json', 'application/xml', 'text/html', 'text/plain', 'multipart/form-data',
-                 'image/jpeg', 'image/png', 'image/gif', 'file/*', 'file/.zip', 'traversal/*'}
+                 'image/jpeg', 'image/png', 'image/gif', 'file/*', 'file/.zip', 'traversal/*', 'multipart/list'}
 
 CONTENT_TYPE_MAP = {
     '.txt': 'text/plain',
