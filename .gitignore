@@ -8,8 +8,9 @@ __pycache__
 *.zip
 test
 
-
-
 # todo files
 *.todo
+
+# environment files
+*.env
 

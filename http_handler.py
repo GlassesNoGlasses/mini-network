@@ -98,11 +98,65 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         '''
 
         if not headers:
-            headers = {'Content-Type': 'text/html'}
+            headers = {'Content-Type': 'text/plain'}
         
         for header, value in headers.items():
             self.send_header(header, value)
         self.end_headers()
+
+
+    def _list_file_payload(self) -> tuple[str, bytes]:
+        ''' Lists the files in the current directory and returns the payload.
+
+            :rtype: tuple[str, bytes]
+            :return: Returns a tuple containing (`res_boundary`, `res_boundary + payload + res_boundary`) 
+            of the files in the current directory.
+        '''
+
+        current_dir = self.server.current_dir
+        files = os.listdir(current_dir)
+        boundary = '--' + ''.join(choice(ascii_uppercase + digits) for _ in range(BOUNDARY_LENGTH)) + '--'
+        payload = boundary.encode('utf-8') + b'\r\n'
+
+        for file in files:
+            payload += f"{file}\r\n".encode('utf-8')
+        
+        payload += boundary.encode('utf-8')
+
+        return (boundary, payload)
+
+
+    def _change_client_dir(self, cd_dir: str) -> bool:
+        ''' Changes client active directory. Returns True if directory change was successful.
+            Raises ValueError if invalid path is given. Raises PermissionError if path is not allowed.
+
+            @param path: cd_dir - The directory to change to.
+            :raises: ValueError if invalid path is given.
+            :raises: PermissionError if path change is not allowed.
+            :rtype: bool
+            :return: True if directory change is successful for user.
+        '''
+
+        if cd_dir == '.':
+            return True
+    
+        current_dir = self.server.current_dir.split('/')
+        
+        # TODO: check user permissions to change to higher directories
+        if cd_dir == '..':
+            if len(current_dir) == 1:
+                raise PermissionError("Invalid permissiosn to change to higher directory")
+            elif len(current_dir) > 1:
+                current_dir.pop()
+        elif "\\" in cd_dir or "/" in cd_dir:
+            raise ValueError(f"Invalid directory path {cd_dir}")
+        elif cd_dir in os.listdir(self.server.current_dir):
+            current_dir.append(cd_dir)
+        else:
+            raise ValueError(f"No existing directory {cd_dir} in {self.server.current_dir}")
+        
+        self.server.current_dir = '/'.join(current_dir)
+        return True
 
 
     def do_GET(self):
@@ -161,7 +215,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
 
         try:
             # obtain the boundary, and content length from the headers
-            boundary: str = self.headers['Content-Type'].split("=")[1]
+            boundary: str = self.headers['Boundary']
             content_length: int = int(self.headers['Content-Length'])
             print(f"Boundary: {boundary}")
 
@@ -175,7 +229,8 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                     f.write(file_content['data'])
         
             res_boundary, res_message = self._list_file_payload()
-            res_headers['Content-Type'] = 'multipart/list' + f"; boundary={res_boundary}"
+            res_headers['Content-Type'] = 'multipart/list'
+            res_headers['Boundary'] = res_boundary
         except KeyError:
             res_code = 400
             res_message = b"Could not find headers"
@@ -194,7 +249,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
 
         try:
             # obtain the boundary, and content length from the headers
-            boundary: str = self.headers['Content-Type'].split("=")[1]
+            boundary: str = self.headers['Boundary']
             content_length : int = int(self.headers['Content-Length'])
             print(f"Boundary: {boundary}")
     
@@ -208,7 +263,8 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                 os.rename(f"{self.server.current_dir}/{file_name}", f"{self.server.current_dir}/{file_content['new_name']}")
             
             res_boundary, res_message = self._list_file_payload()
-            res_headers['Content-Type'] = 'multipart/list' + f"; boundary={res_boundary}"
+            res_headers['Content-Type'] = 'multipart/list'
+            res_headers['Boundary'] = res_boundary
         
         except KeyError:
             res_code = 400
@@ -254,7 +310,8 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                             os.remove(file_path)
 
                 res_boundary, res_message = self._list_file_payload()
-                res_headers['Content-Type'] = 'multipart/list' + f"; boundary={res_boundary}"
+                res_headers['Content-Type'] = 'multipart/list'
+                res_headers['Boundary'] = res_boundary
         except Exception as e:
             print(f"Error deleting files: {e}")
             res_code = 500
@@ -267,7 +324,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
 
 
     def do_PATCH(self):
-        res_code: int = 200
+        res_code: int = 500
         res_message: bytes | None = None
         res_headers = {}
 
@@ -276,82 +333,32 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         url = self.path
         query_components = parse_qs(urlparse(self.path).query)
         print(f"Headers: {headers}")
-        print(f"URL: {url}")
-        print(f"Query components: {query_components}")
 
-        cd_dir = query_components.get("dir", [])
+        if headers['Content-Type'] == 'tls/init':
+            encrypted_message = self.rfile.read(int(headers['Content-Length']))
+            print(f"Encrypted message: {encrypted_message}")
+            self.server.tls._establish_TLS(init_headers=headers, client_hello=encrypted_message)
+        elif headers['Content-Type'] == 'traversal/*':
+            print(f"URL: {url}")
+            print(f"Query components: {query_components}")
 
-        if not cd_dir:
-            res_code = 400
-            res_message = f'Could not find {cd_dir} to change directory'.encode('utf-8')
-        else:
-            try:
-                self._change_client_dir(cd_dir[0])
-                res_boundary, res_message = self._list_file_payload()
-                res_headers['Content-Type'] = 'multipart/list' + f"; boundary={res_boundary}"
-            except Exception as e:
-                print(f"Error changing directory: {e}")
-                res_code = 500
-                res_message = f'Error changing directory to {cd_dir[0]} - {e}'.encode('utf-8')
+            cd_dir = query_components.get("dir", [])
+
+            if not cd_dir:
+                res_code = 400
+                res_message = f'Could not find {cd_dir} to change directory'.encode('utf-8')
+            else:
+                try:
+                    self._change_client_dir(cd_dir[0])
+                    res_boundary, res_message = self._list_file_payload()
+                    res_headers['Content-Type'] = 'multipart/list'
+                    res_headers['Boundary'] = res_boundary
+                    res_code = 200
+                except Exception as e:
+                    print(f"Error changing directory: {e}")
+                    res_message = f'Error changing directory to {cd_dir[0]} - {e}'.encode('utf-8')
 
         self.send_response(res_code)
         self.send_headers(res_headers)
         self.wfile.write(res_message)
-
-
-    def _list_file_payload(self) -> tuple[bytes, bytes]:
-        ''' Lists the files in the current directory and returns the payload.
-
-            :rtype: tuple[str, bytes]
-            :return: Returns a tuple containing (`res_boundary`, `res_boundary + payload + res_boundary`) 
-            of the files in the current directory.
-        '''
-
-        current_dir = self.server.current_dir
-        files = os.listdir(current_dir)
-        boundary = '--' + ''.join(choice(ascii_uppercase + digits) for _ in range(BOUNDARY_LENGTH)) + '--'
-        payload = boundary.encode('utf-8') + b'\r\n'
-
-        for file in files:
-            payload += f"{file}\r\n".encode('utf-8')
-        
-        payload += boundary.encode('utf-8')
-
-        return (boundary, payload)
-
-
-    def _change_client_dir(self, cd_dir: str) -> bool:
-        ''' Changes client active directory. Returns True if directory change was successful.
-            Raises ValueError if invalid path is given. Raises PermissionError if path is not allowed.
-
-            @param path: cd_dir - The directory to change to.
-            :raises: ValueError if invalid path is given.
-            :raises: PermissionError if path change is not allowed.
-            :rtype: bool
-            :return: True if directory change is successful for user.
-        '''
-
-        if cd_dir == '.':
-            return True
-    
-        current_dir = self.server.current_dir.split('/')
-        
-        # TODO: check user permissions to change to higher directories
-        if cd_dir == '..':
-            if len(current_dir) == 1:
-                raise PermissionError("Invalid permissiosn to change to higher directory")
-            elif len(current_dir) > 1:
-                current_dir.pop()
-        elif "\\" in cd_dir or "/" in cd_dir:
-            raise ValueError(f"Invalid directory path {cd_dir}")
-        elif cd_dir in os.listdir(self.server.current_dir):
-            current_dir.append(cd_dir)
-        else:
-            raise ValueError(f"No existing directory {cd_dir} in {self.server.current_dir}")
-        
-        self.server.current_dir = '/'.join(current_dir)
-        return True
-    
-
-        
 

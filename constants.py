@@ -10,6 +10,8 @@ be updated to suit the specific use case of the package.
 
 '''
 
+from helper import ExtendedEnum
+
 # Network Constants
 PORT = 8080
 
@@ -19,20 +21,22 @@ HTTP_METHODS = {'GET', 'POST', 'PUT', 'DELETE', 'PATCH'}
 
 RESPONSE_CODES = {200, 201, 400, 404, 500}
 
-CONTENT_TYPES = {'application/json', 'application/xml', 'text/html', 'text/plain', 'multipart/form-data',
-                 'image/jpeg', 'image/png', 'image/gif', 'file/*', 'file/.zip', 'traversal/*', 'multipart/list'}
-
-CONTENT_TYPE_MAP = {
-    '.txt': 'text/plain',
-    '.html': 'text/html',
-    '.json': 'application/json',
-    '.xml': 'application/xml',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.gif': 'image/gif',
-    '.pdf': 'application/pdf',
-    '.zip': 'application/zip',
-}
+CONTENT_TYPES = {'text/html', 'text/plain', 'multipart/form-data','file/*', 'file/.zip', 
+                 'traversal/*', 'multipart/list', 'tls/init', 'tls/finish'}
 
 BOUNDARY_LENGTH = 16
+
+
+# TLS Constants
+TLS_VERSION = 'TLSv1.3'
+
+
+class CIPHER_SUITES(ExtendedEnum):
+    ''' Enum class to represent the different cipher suites supported by the TLS class. 
+        Custom cipher suites can be added here.
+    '''
+
+    AES128_GCM_SHA256 = 1
+    AES256_GCM_SHA384 = 2
+    CHACHA20_POLY1305_SHA256 = 3
+    AES128_CCM_SHA256 = 4

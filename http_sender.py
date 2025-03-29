@@ -8,20 +8,17 @@ This module contains the BaseHTTPSender class which is used to send HTTP request
 '''
 
 import requests
-import tls
 import os
 from string import ascii_uppercase, digits
 from secrets import choice
-from constants import PORT, HTTP_METHODS, BOUNDARY_LENGTH, CONTENT_TYPE_MAP
+from constants import PORT, HTTP_METHODS, BOUNDARY_LENGTH
 
 class BaseHTTPSender():
-    def __init__(self, url=f"http://localhost:{PORT}", tls: tls.TLS | None = None, cipher_suite=None):
+    def __init__(self, url=f"http://localhost:{PORT}"):
         ''' Initializes the BaseHTTPSender class with the URL of the server to send requests to. 
-            Optionally, the TLS and cipher suite can be specified.
         '''
 
         self.url = url
-        self.tls = tls
 
     
     def GET(self, files: list[str], duplicates: bool = False) -> requests.Response | None:
@@ -120,7 +117,25 @@ class BaseHTTPSender():
         custom_headers = {'Content-Type': 'traversal/*'}
         
         return self._send_request("PATCH", params={'dir': dir}, headers=custom_headers)
+    
+
+    def TLS_INIT(self, mode: bytes , message: bytes, c_suite: str) -> requests.Response | None:
+        ''' Initializes TLS handshake connection with the server.
+
+            @param mode: bytes - The mode to use for the cipher suite, encrypted by sha256 with the nonce.
+            @param message: bytes - The message to send to the server.
+            @param nonce: bytes - The nonce of client to send to the server.
+            :returns: The response from the server.
+            :rtype: requests.Response | None
+        '''
+
+        custom_headers = {'Content-Type': 'tls/init'}
+        custom_headers['Content-Length'] = str(len(message))
+        custom_headers['Mode'] = mode
+        custom_headers['Cipher-Suite'] = c_suite
         
+        return self._send_request("PATCH", headers=custom_headers, data=message)
+    
 
     def _validate_path(self, path: str) -> bool:
         ''' Validates the path to ensure it is a valid file or directory.
@@ -211,26 +226,37 @@ class BaseHTTPSender():
 
     def _send_request(self, method: str, params: dict | None = None, 
                       headers: dict | None = None, files: list[str] | None = None,
-                      disp_headers: dict[str, dict[str, str]] | None = None) -> requests.Response | None:
-        ''' Main method to send HTTP requests to the server. Encrypts with specified TLS version and cipher suite
-            if specified.
+                      disp_headers: dict[str, dict[str, str]] | None = None,
+                      data: str | bytes | None = None) -> requests.Response | None:
+        ''' Main method to send HTTP requests to the server.
+
+            @param method: str - The HTTP method to use.
+            @param params: dict - (optional) The parameters to send with the request.
+            @param headers: dict - (optional) The custom headers to send with the request.
+            @param files: list[str] - (optional) The file paths of files to send in the request.
+            @param disp_headers: dict[str, dict[str, str]] - (optional) Additional content disposition
+            headers for each file. Maps {`file_name`: {`header_name`: `header_value`}}. `file_name` must be in `files`.
+            @param data: str | bytes - (optional) The data to send in the request body.
+            :returns: The response from the server.
+            :rtype: requests.Response | None
         '''
         method = method.split()[0].upper()
         response = None
 
         try:
             assert method in HTTP_METHODS
-            data = None
+            data = data if data else None
             custom_headers = headers if headers else {}
             custom_headers["User-Agent"] = "User101"
 
             # file handling
             if files:
                 boundary = ''.join(choice(ascii_uppercase + digits) for _ in range(BOUNDARY_LENGTH))
-                custom_headers["Content-Type"] = f"multipart/files; boundary={boundary}"
+                custom_headers["Content-Type"] = f"multipart/files"
+                custom_headers["Boundary"] = boundary
 
                 data = self._craft_file_payload(files, boundary, disposition_headers=disp_headers)  
-                
+
             response = requests.request(method, self.url, params=params, data=data, headers=custom_headers)
 
         except AssertionError:

@@ -3,12 +3,15 @@ import os
 import logging
 from http_handler import HTTPRequestHandler
 from http.server import HTTPServer
-from constants import PORT
+from constants import PORT, CIPHER_SUITES
+from tls_config import Server_TLS
+from dotenv import load_dotenv
 
 class BaseServer(HTTPServer):
 
     def __init__(self, root_dir: str, server_address: tuple, 
-                 RequestHandlerClass: HTTPRequestHandler, bind_and_activate: bool = True):
+                 RequestHandlerClass: HTTPRequestHandler, bind_and_activate: bool = True,
+                 tls_version: str = 'TLSv1.3', cipher_suite: CIPHER_SUITES = CIPHER_SUITES):
         '''
         Initializes the BaseServer class with the directory paths to serve.
         @param root_dir: str - The root directory to serve.
@@ -25,6 +28,9 @@ class BaseServer(HTTPServer):
                 raise FileNotFoundError(f"Invalid root directory: {root_dir}")
             
             self.current_dir = root_dir
+            self.tls = Server_TLS(RequestHandlerClass, tls_version=tls_version, cipher_suite=cipher_suite)
+            self.tls.server_address = server_address
+
             print(f"[INFO] Starting server at root dir: {root_dir}")
             print(f"[SERVER] WAITING FOR REQUESTS ON ADDRESS: {server_address}")
 
