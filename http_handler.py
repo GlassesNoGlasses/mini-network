@@ -334,29 +334,36 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         query_components = parse_qs(urlparse(self.path).query)
         print(f"Headers: {headers}")
 
-        if headers['Content-Type'] == 'tls/init':
-            encrypted_message = self.rfile.read(int(headers['Content-Length']))
-            print(f"Encrypted message: {encrypted_message}")
-            self.server.tls._establish_TLS(init_headers=headers, client_hello=encrypted_message)
-        elif headers['Content-Type'] == 'traversal/*':
-            print(f"URL: {url}")
-            print(f"Query components: {query_components}")
+        try:
+            if headers['Content-Type'] == 'tls/init':
+                encrypted_message = self.rfile.read(int(headers['Content-Length']))
+                print(f"Encrypted message: {encrypted_message}")
+                self.server.tls._establish_TLS(init_headers=headers, client_hello=encrypted_message)
+                self.server._generate_client_session_id(headers['Client-Name'])
+                res_message = self.server.tls.encrypt(b'sid=' + self.server.client_sessions[headers['Client-Name']])
+                res_headers['Content-Type'] = 'tls/established'
+                res_code = 200
+            elif headers['Content-Type'] == 'traversal/*':
+                print(f"URL: {url}")
+                print(f"Query components: {query_components}")
 
-            cd_dir = query_components.get("dir", [])
+                cd_dir = query_components.get("dir", [])
 
-            if not cd_dir:
-                res_code = 400
-                res_message = f'Could not find {cd_dir} to change directory'.encode('utf-8')
-            else:
-                try:
+                if not cd_dir:
+                    res_code = 400
+                    res_message = f'Could not find {cd_dir} to change directory'.encode('utf-8')
+                else:
                     self._change_client_dir(cd_dir[0])
-                    res_boundary, res_message = self._list_file_payload()
+                    res_boundary, payload = self._list_file_payload()
                     res_headers['Content-Type'] = 'multipart/list'
                     res_headers['Boundary'] = res_boundary
                     res_code = 200
-                except Exception as e:
-                    print(f"Error changing directory: {e}")
-                    res_message = f'Error changing directory to {cd_dir[0]} - {e}'.encode('utf-8')
+                    res_message = payload
+        except Exception as e:
+            print(f"Error {e}")
+            res_code = 500
+            res_message = b'Error processing request'
+            res_headers = {'Content-Type': 'text/plain'}
 
         self.send_response(res_code)
         self.send_headers(res_headers)

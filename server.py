@@ -5,7 +5,6 @@ from http_handler import HTTPRequestHandler
 from http.server import HTTPServer
 from constants import PORT, CIPHER_SUITES
 from tls_config import Server_TLS
-from dotenv import load_dotenv
 
 class BaseServer(HTTPServer):
 
@@ -28,6 +27,7 @@ class BaseServer(HTTPServer):
                 raise FileNotFoundError(f"Invalid root directory: {root_dir}")
             
             self.current_dir = root_dir
+            self.client_sessions = {}
             self.tls = Server_TLS(RequestHandlerClass, tls_version=tls_version, cipher_suite=cipher_suite)
             self.tls.server_address = server_address
 
@@ -66,6 +66,19 @@ class BaseServer(HTTPServer):
 
     def __enter__(self):
         return self
+    
+    def _generate_client_session_id(self, client_name: str) -> bytes:
+        """ Generates a random session ID for the client.
+
+            :returns: bytes - The generated session ID.
+            :rtype: bytes
+        """
+        if not client_name:
+            raise ValueError("Client name cannot be empty")
+        
+        if client_name in self.client_sessions:
+            return self.client_sessions[client_name]
+        return os.urandom(16)
     
     def __exit__(self, exc_type, exc_value, traceback):
         self.server_close()

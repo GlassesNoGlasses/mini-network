@@ -15,6 +15,59 @@ from hashlib import sha256
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 from dotenv import load_dotenv
+from cryptography.hazmat.primitives.asymmetric import dh
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+class EncryptionDetails():
+    def __init__(self, mode: str, **kwargs):
+        ''' Initializes the EncryptionDetails class with the mode. Mode should be one of the supported cipher suites.
+
+            :param mode: The encryption mode to use. Must be one of the supported cipher suites.
+            :type mode: str
+            :param kwargs: Additional arguments to pass to the cipher suite initialization.
+            :type kwargs: dict
+        '''
+        self.mode = mode
+        self.details = {}
+
+        match mode:
+            case 'AES128_GCM_SHA256':
+                self._init_AES128_GCM_SHA256(gen=kwargs.get('generator', 3), key_size=kwargs.get('key_size', 2048))
+            case _:
+                pass
+
+    def get_mode(self) -> str:
+        ''' Returns the encryption mode. 
+
+            :returns: The encryption mode.
+            :rtype: str
+        '''
+        assert self.mode, "No encryption mode found. TLS not established."
+        return self.mode
+
+    
+    def _init_AES128_GCM_SHA256(self, gen: int = 3, key_size: int = 2048) -> None:
+        ''' Initializes the AES128-GCM-SHA256 cipher suite. Stores the details in `self.details` dictionary.
+
+            :param gen: The generator to use. Must be between 2 and 5 (inclusive).
+            :type gen: int
+            :param key_size: The key size to use. Must be 2048, 3072, or 4096.
+            :type key_size: int
+            :raises AssertionError: If the generator or key size is invalid.
+        '''
+
+        assert 2 <= gen <= 5, "Invalid generator. Must be 2 or 3."
+        assert key_size in [2048, 3072, 4096], "Invalid key size. Must be 2048, 3072, or 4096."
+
+        self.details['generator'] = gen
+        self.details['key_size'] = key_size
+        self.details['dh_params'] = dh.generate_parameters(generator=gen, key_size=key_size)
+        self.details['private_key'] = self.details['dh_params'].generate_private_key()
+        self.details['public_key'] = self.details['private_key'].public_key()
+        return
+
+
 
 class TLS():
     def __init__(self, tls_version: str = 'TLSv1.3', cipher_suite: CIPHER_SUITES = CIPHER_SUITES):
@@ -54,6 +107,7 @@ class TLS():
             :param key: The encryption key to use.
             :type key: bytes
         '''
+
         self.key = key 
         self.mode = mode
     
@@ -71,6 +125,11 @@ class TLS():
         assert self.mode, "No encryption mode found. TLS not established."
         assert self.key, "No encryption key found. TLS not established."
 
+        if self.mode == CIPHER_SUITES.AES128_GCM_SHA256:
+            cipher = AES.new(key=self.key, mode=AES.MODE_GCM)
+            server_nonce = cipher.nonce
+            ciphertext, tag = cipher.encrypt_and_digest(data)
+            return server_nonce + tag + ciphertext
         pass
 
 
@@ -109,12 +168,47 @@ class Server_TLS(TLS):
         self.handler = handler
 
     
-    def _decrypt_client_hello(self, client_hello: bytes) -> tuple[bytes, bytes, bytes] | None:
-        ''' Decrypts the client hello message from the client. 
+    def _parse_AES_128_GCM_SHA256(self, client_hello: bytes) -> None:
+        ''' Parses the client hello message from the client. 
 
-            :returns: The ciphertext, tag, and nonce.
-            :rtype: tuple[bytes, bytes, bytes] | None
+            :param client_hello: The encrypted in AES GCM Mode client hello message.
+            :type
+            client_hello: bytes
         '''
+
+        # parse the client hello message
+        c_nonce = client_hello[:16]
+        tag = client_hello[16:32]
+        ciphertext = client_hello[32:]
+        print(f"Ciphertext: {ciphertext}")
+        print(f"Tag: {tag}")
+        print(f"Nonce: {c_nonce}")
+        cipher = AES.new(key=self.key, mode=AES.MODE_GCM, nonce=c_nonce)
+        plaintext = cipher.decrypt_and_verify(ciphertext, tag)
+        print(f"Plaintext: {plaintext}")
+
+        # retrieve the generator, key size, and public key from the plaintext
+        raw_generator, raw_key_size, pub_key = plaintext.split(b'&')
+        generator = int.from_bytes(raw_generator.split(b'=')[1], 'big')
+        key_size = int.from_bytes(raw_key_size.split(b'=')[1], 'big')
+        pub_key = serialization.load_pem_public_key(pub_key)
+        print(f"Generator: {generator}")
+        print(f"Key size: {key_size}")
+        print(f"Public key: {pub_key}")
+
+        # generate the shared key
+        self.encryption_details = EncryptionDetails(mode='AES128_GCM_SHA256', kwargs={'generator': generator, 'key_size': key_size})
+        self.encryption_details.details['shared_key'] = self.encryption_details.details['private_key'].exchange(pub_key)
+        key = HKDF(
+            algorithm=sha256(),
+            length=32,
+            salt=None,
+            info=b'handshake data',
+        ).derive(self.encryption_details.details['shared_key'])
+
+        self._set_encryption_details(key=key, mode=CIPHER_SUITES.AES128_GCM_SHA256)
+
+
     
 
     def _establish_TLS(self, init_headers: dict[str, str], client_hello: bytes) -> tuple[bytes, bytes, bytes] | None:
@@ -129,16 +223,10 @@ class Server_TLS(TLS):
         key = key[:16]
         print('KEY: ', key)
 
-        print("Parsing client hello message.")
-        c_nonce = client_hello[:16]
-        tag = client_hello[16:32]
-        ciphertext = client_hello[32:]
-        print(f"Ciphertext: {ciphertext}")
-        print(f"Tag: {tag}")
-        print(f"Nonce: {c_nonce}")
         
         mode = None
         encrypted_mode = init_headers['Mode']
+        c_nonce = client_hello[:16]
         
         for suite in self.cipher_suite.list_names():
             if sha256(suite.encode() + c_nonce).hexdigest() == encrypted_mode:
@@ -147,11 +235,18 @@ class Server_TLS(TLS):
 
         assert mode, "No cipher suite found in the client hello message."
 
-        cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=c_nonce)
-        plaintext = cipher.decrypt_and_verify(ciphertext, tag)
-        print(f"Plaintext: {plaintext}")
-
+        match mode:
+            case 'AES128_GCM_SHA256':
+                self._parse_AES_128_GCM_SHA256(init_headers, client_hello)
+            case _:
+                print(f"Unsupported cipher suite: {mode}.")
+                return None
+        
+        assert self.key, "No encryption key found. TLS not established."
+        assert self.mode, "No encryption mode found. TLS not established."
+        
         print("Client hello message parsed successfully.")
+
 
 
 
@@ -174,15 +269,16 @@ class Client_TLS(TLS):
         self.sender = sender
 
     # TODO: implement different cipher suites 
-    def _create_client_hello(self, mode: str) -> tuple[bytes, bytes, bytes, bytes]:
+    def _create_client_hello(self, mode: str) -> tuple[bytes, bytes, bytes]:
         ''' Initiates the TLS 1.3 handshake with the server. 
 
             :param mode: The mode to use for the cipher suite. Default is `AES128-GCM-SHA256`.
-            :returns: The ciphertext, tag, nonce, and client random.
+            :returns: The ciphertext, tag, and nonce.
             :rtype: tuple[bytes, bytes, bytes]
         '''
 
         print("Initiating TLS 1.3 handshake with the server.")
+        assert mode in self.cipher_suite.list_names(), f"Unsupported cipher suite: {mode}. Supported cipher suites are: {self.cipher_suite.list_names()}"
 
         # TODO: implement `mode` variable; inlcudes modification of key length
         key = os.getenv('SHARED_PRIVATE_KEY').encode()
@@ -190,14 +286,18 @@ class Client_TLS(TLS):
         key = key[:16]
         print('KEY: ', key)
 
-        client_random = get_random_bytes(16)
-        msg = b'rdm=' + client_random
-        nonce = get_random_bytes(16)
-
-        cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=nonce)
+        self.encryption_details = EncryptionDetails(mode=mode)
+        msg = b'g=' + self.encryption_details.details['generator'].to_bytes(2, 'big') 
+        msg += b'&p=' + self.encryption_details.details['key_size'].to_bytes(2, 'big')
+        msg += b'&pub_key=' + self.encryption_details.details['public_key'].public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        
+        cipher = AES.new(key=key, mode=AES.MODE_GCM)
         ciphertext, tag = cipher.encrypt_and_digest(msg)
     
-        return ciphertext, tag, nonce, client_random
+        return ciphertext, tag, cipher.nonce
     
 
     def INIT_TLS_Handshake(self, server_url: str) -> bool:
@@ -218,7 +318,7 @@ class Client_TLS(TLS):
         
         try:
             mode = 'AES128_GCM_SHA256'
-            ciphertext, tag, nonce, rdm = self._create_client_hello(mode=mode)
+            ciphertext, tag, nonce = self._create_client_hello(mode=mode)
             c_suite = f'{self.tls_version};{";".join(self.cipher_suite.list_names())}'
             print(f"Ciphertext: {ciphertext}")
             print(f"Tag: {tag}")
@@ -229,6 +329,8 @@ class Client_TLS(TLS):
             if not response or response.status_code != 200:
                 print("Connection failed. Please check the server URL.")
                 return False
+            
+            
         except AssertionError as e:
             print(e)
             return
@@ -236,6 +338,5 @@ class Client_TLS(TLS):
         
         print("Connection successful.")
         return True
-
 
 
