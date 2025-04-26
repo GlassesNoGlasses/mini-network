@@ -338,9 +338,9 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             if headers['Content-Type'] == 'tls/init':
                 encrypted_message = self.rfile.read(int(headers['Content-Length']))
                 print(f"Encrypted message: {encrypted_message}")
-                self.server.tls._establish_TLS(init_headers=headers, client_hello=encrypted_message)
+                s_message = self.server.tls._establish_TLS(init_headers=headers, client_hello=encrypted_message)
                 self.server._generate_client_session_id(headers['Client-Name'])
-                res_message = self.server.tls.encrypt(b'sid=' + self.server.client_sessions[headers['Client-Name']])
+                res_message = s_message + self.server.tls.encrypt(self.server._get_session_id[headers['Client-Name']])
                 res_headers['Content-Type'] = 'tls/established'
                 res_code = 200
             elif headers['Content-Type'] == 'traversal/*':

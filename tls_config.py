@@ -28,6 +28,10 @@ class EncryptionDetails():
             :param kwargs: Additional arguments to pass to the cipher suite initialization.
             :type kwargs: dict
         '''
+
+        if mode not in CIPHER_SUITES.list_names():
+            raise ValueError(f"Unsupported cipher suite: {mode}. Supported cipher suites are: {CIPHER_SUITES.list_names()}")
+
         self.mode = mode
         self.details = {}
 
@@ -82,6 +86,7 @@ class TLS():
 
         self.tls_version = tls_version
         self.cipher_suite = cipher_suite
+        self.encryption_details = None
 
     
     def _load_env(self) -> bool:
@@ -101,8 +106,8 @@ class TLS():
         return True
 
 
-    def _set_encryption_details(self, key: bytes, mode: CIPHER_SUITES) -> None:
-        ''' Sets the encryption key to use for encryption and decryption.
+    def _set_TLS_details(self, key: bytes, mode: CIPHER_SUITES) -> None:
+        ''' Sets the encryption key and mode to use for encryption and decryption.
 
             :param key: The encryption key to use.
             :type key: bytes
@@ -120,17 +125,20 @@ class TLS():
             :return: The encrypted data.
             :rtype: bytes
             :raises AssertionError: If no encryption key is found.
+            :raises ValueError: If unsupported cipher suite is used.
         '''
 
-        assert self.mode, "No encryption mode found. TLS not established."
-        assert self.key, "No encryption key found. TLS not established."
+        assert self.mode and self.key, "No encryption key/mode found. TLS not established."
 
         if self.mode == CIPHER_SUITES.AES128_GCM_SHA256:
             cipher = AES.new(key=self.key, mode=AES.MODE_GCM)
             server_nonce = cipher.nonce
             ciphertext, tag = cipher.encrypt_and_digest(data)
-            return server_nonce + tag + ciphertext
-        pass
+            self.encryption_details.details['nonce'] = server_nonce
+            self.encryption_details.details['tag'] = tag
+            return b'&s_nonce=' + server_nonce + b'&tag=' + tag + '&sid=' + ciphertext
+        
+        raise ValueError("Unsupported cipher suite. Cannot encrypt data.")
 
 
     def decrypt(self, data: bytes) -> bytes:
@@ -141,12 +149,17 @@ class TLS():
             :return: The decrypted data.
             :rtype: bytes
             :raises AssertionError: If no encryption key is found.
+            :raises ValueError: If unsupported cipher suite is used.
         '''
 
-        assert self.mode, "No encryption mode found. TLS not established."
-        assert self.key, "No encryption key found. TLS not established."
+        assert self.mode and self.key, "No encryption key/mode found. TLS not established."
 
-        pass
+        if self.mode == CIPHER_SUITES.AES128_GCM_SHA256:
+            cipher = AES.new(key=self.key, mode=AES.MODE_GCM, nonce=self.encryption_details.details['nonce'])
+            plaintext = cipher.decrypt_and_verify(data, self.encryption_details.details['tag'])
+            return plaintext
+        
+        raise ValueError("Unsupported cipher suite. Cannot decrypt data.")
 
 
 class Server_TLS(TLS):
@@ -168,12 +181,14 @@ class Server_TLS(TLS):
         self.handler = handler
 
     
-    def _parse_AES_128_GCM_SHA256(self, client_hello: bytes) -> None:
-        ''' Parses the client hello message from the client. 
+    def _parse_AES_128_GCM_SHA256(self, client_hello: bytes) -> bytes:
+        ''' Parses the client hello message from the client. Returns server public key to exchange with client.
 
             :param client_hello: The encrypted in AES GCM Mode client hello message.
             :type
             client_hello: bytes
+            :return: The server public key.
+            :rtype: bytes
         '''
 
         # parse the client hello message
@@ -203,28 +218,30 @@ class Server_TLS(TLS):
             algorithm=sha256(),
             length=32,
             salt=None,
-            info=b'handshake data',
         ).derive(self.encryption_details.details['shared_key'])
 
-        self._set_encryption_details(key=key, mode=CIPHER_SUITES.AES128_GCM_SHA256)
+        self._set_TLS_details(key=key, mode=CIPHER_SUITES.AES128_GCM_SHA256)
+
+        return b'pub_key=' + self.encryption_details.details['public_key'].public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
 
 
-    
-
-    def _establish_TLS(self, init_headers: dict[str, str], client_hello: bytes) -> tuple[bytes, bytes, bytes] | None:
+    def _establish_TLS(self, init_headers: dict[str, str], client_hello: bytes) -> bytes | None:
         ''' Parses the client hello message from the client. 
 
-            :returns: The ciphertext, tag, and nonce.
-            :rtype: tuple[bytes, bytes, bytes] | None
+            :returns: response message to the client.
+            :rtype: bytes
         '''
 
         key = os.getenv('SHARED_PRIVATE_KEY').encode()
         assert key, "No shared private key found between server and client."
         key = key[:16]
         print('KEY: ', key)
-
         
         mode = None
+        server_message = b''
         encrypted_mode = init_headers['Mode']
         c_nonce = client_hello[:16]
         
@@ -237,7 +254,7 @@ class Server_TLS(TLS):
 
         match mode:
             case 'AES128_GCM_SHA256':
-                self._parse_AES_128_GCM_SHA256(init_headers, client_hello)
+                server_message = self._parse_AES_128_GCM_SHA256(init_headers, client_hello)
             case _:
                 print(f"Unsupported cipher suite: {mode}.")
                 return None
@@ -246,7 +263,7 @@ class Server_TLS(TLS):
         assert self.mode, "No encryption mode found. TLS not established."
         
         print("Client hello message parsed successfully.")
-
+        return server_message
 
 
 
@@ -264,6 +281,7 @@ class Client_TLS(TLS):
             :param cipher_suite: The cipher suite to use. Default is the CIPHER_SUITES constant.
             :type cipher_suite: CIPHER_SUITES
         '''
+
         super().__init__(tls_version, cipher_suite)
         super()._load_env()
         self.sender = sender
@@ -298,7 +316,72 @@ class Client_TLS(TLS):
         ciphertext, tag = cipher.encrypt_and_digest(msg)
     
         return ciphertext, tag, cipher.nonce
+
     
+    def _parse_AES_128_GCM_SHA256(self, content_details: list[bytes]) -> bool:
+        ''' Parses the server hello message from the server. Returns true if encryption details (key, mode) are set.
+
+            :param content_details: AES GCM Mode server hello message.
+            :type content_details: list[bytes]
+            :returns: True if the encryption details were set successfully, False otherwise.
+            :rtype: bool
+        '''
+
+        # server_hello format: s_message&s_nonce=nonce&s_tag=tag&sid=encryption(sid)
+
+        mode = 'AES128_GCM_SHA256'
+        
+        try:
+            s_pub_key = content_details[0].split(b'pub_key=')[1]
+            s_pub_key = serialization.load_pem_public_key(s_pub_key)
+            self.encryption_details.details['shared_key'] = self.encryption_details.details['private_key'].exchange(s_pub_key)
+            key = HKDF(
+                algorithm=sha256(),
+                length=32,
+                salt=None,
+            ).derive(self.encryption_details.details['shared_key'])
+
+            if not key:
+                return False
+            
+            self.encryption_details.details['nonce'] = content_details[-3].split(b's_nonce=')[1]
+            self.encryption_details.details['tag'] = content_details[-2].split(b'tag=')[1]
+            self._set_TLS_details(key=key, mode=mode)
+        except Exception as e:
+            print(f"Error parsing AES_128_GCM_SHA256 server hello message: {e}")
+            return False
+
+        return True
+    
+
+    def parse_server_hello(self, mode: str, server_hello: bytes) -> bytes | None:
+        ''' Parses the server hello message from the server. Establishes the TLS connection details (key, mode)
+            and sets the session ID.
+
+            :param server_hello: The encrypted in AES GCM Mode server hello message.
+            :type server_hello: bytes
+            :param mode: The mode to use for the cipher suite. Default is `AES128-GCM-SHA256`.
+            :type mode: str
+            :returns: The session ID if the server hello message was parsed successfully, None otherwise.
+            :rtype: bytes
+            :raises AssertionError: If the server hello message is invalid.
+        '''
+        # server_hello format: s_message&sid=encryption(sid)
+
+        content_details = server_hello.split(b'&')
+        encypted_sid = content_details[-1].split(b'sid=')[1] # encrypted session ID
+        print(f"Encrypted session ID: {encypted_sid}")
+
+        match mode:
+            case 'AES128_GCM_SHA256':
+                assert self._parse_AES_128_GCM_SHA256(content_details[:-1]), "Failed to parse AES_128_GCM_SHA256 server hello message."
+                
+            case _:
+                print(f"Unsupported cipher suite: {mode}.")
+                return None
+        
+        return self.decrypt(encypted_sid)
+
 
     def INIT_TLS_Handshake(self, server_url: str) -> bool:
         ''' Attempts to conenct to the server whilst providing auth details. 
@@ -330,6 +413,17 @@ class Client_TLS(TLS):
                 print("Connection failed. Please check the server URL.")
                 return False
             
+            init_headers = response.headers
+            assert init_headers['Status'] == '200', "TLS handshake failed. Server did not respond with a 200 status code."
+            assert init_headers['Content-Type'] == "tls/established", "TLS handshake failed. Server did not respond with a valid content type."
+
+            server_message = response.content
+            print(f"Server message: {server_message}")
+
+            sid = self.parse_server_hello(mode=mode, server_hello=server_message)
+            assert sid, "Failed to parse server hello message. No session ID found."
+            print(f"Session ID: {sid}")
+
             
         except AssertionError as e:
             print(e)

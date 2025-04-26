@@ -27,7 +27,7 @@ class BaseServer(HTTPServer):
                 raise FileNotFoundError(f"Invalid root directory: {root_dir}")
             
             self.current_dir = root_dir
-            self.client_sessions = {}
+            self.client_sessions = {} # maps client names to TLS objects
             self.tls = Server_TLS(RequestHandlerClass, tls_version=tls_version, cipher_suite=cipher_suite)
             self.tls.server_address = server_address
 
@@ -67,18 +67,36 @@ class BaseServer(HTTPServer):
     def __enter__(self):
         return self
     
-    def _generate_client_session_id(self, client_name: str) -> bytes:
-        """ Generates a random session ID for the client.
+    
+    def _generate_client_session_id(self, client_name: str) -> None:
+        """ Generates a random session ID for the client. Stores it in the client_sessions dictionary.
+            :param client_name: str - The name of the client.
 
-            :returns: bytes - The generated session ID.
-            :rtype: bytes
+            :raises ValueError: If the client name is empty or if the session ID already exists.
         """
         if not client_name:
             raise ValueError("Client name cannot be empty")
         
-        if client_name in self.client_sessions:
-            return self.client_sessions[client_name]
-        return os.urandom(16)
+        if client_name not in self.client_sessions:
+            self.client_sessions[client_name] = os.urandom(16)
+            return
+
+        raise ValueError(f"Client session ID already exists for {client_name}")
+    
+
+    def _get_session_id(self, client_name: str) -> bytes | None:
+        """ Retrieves the session ID for the client.
+
+            :param client_name: str - The name of the client.
+            :returns: bytes | None - The session ID. If the client name is not found, raise KeyError.
+            :raises KeyError: If the client name is not found.
+            :raises ValueError: If the client name is empty.
+        """
+        if not client_name:
+            raise ValueError("Client name cannot be empty")
+        
+        return self.client_sessions[client_name]
+    
     
     def __exit__(self, exc_type, exc_value, traceback):
         self.server_close()
